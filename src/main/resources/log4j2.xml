@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="trace">
+
+    <Appenders>
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{YYYY-MM-dd HH:mm:ss} %-5p %c{1}:%L - %msg%n"/>
+
+        </Console>
+
+        <RollingFile name="ott_sdk_INFO" filename="logs/sipgw.log"
+                     filepattern="logs/ott_sdk.log.125.1.%d{YYYY-MM-dd}.gz">
+            <PatternLayout pattern="%d{YYYY-MM-dd HH:mm:ss} %-5p %c{1}:%L - %msg%n"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+            </Policies>
+            <DefaultRolloverStrategy max="7"/>
+        </RollingFile>
+        <RollingFile name="ott_sdk_ERROR" filename="logs/sipgw_ERROR.log"
+                     filepattern="logs/ott_sdk_ERROR.125.1.%d{YYYY-MM-dd}.log.gz">
+            <PatternLayout pattern="%d{YYYY-MM-dd HH:mm:ss} %-5p %c{1}:%L - %msg%n"/>
+            <Policies>
+                <SizeBasedTriggeringPolicy size="300 MB"/>
+            </Policies>
+            <ThresholdFilter level="ERROR" onMatch="ACCEPT" onMismatch="DENY"/>
+            <DefaultRolloverStrategy max="2"/>
+        </RollingFile>
+
+        <RollingFile filename="logs/cdr/cdr.log"
+                     filepattern="logs/cdr/cdr.%d{YYYY-MM-dd}.log.gz"
+                     name="cdr_call">
+            <DefaultRolloverStrategy/>
+            <PatternLayout pattern="%msg%n"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+            </Policies>
+        </RollingFile>
+
+        <RollingFile filename="logs/cdr2/cdr.log"
+                     filepattern="logs/cdr2/cdr.%d{YYYY-MM-dd}.log.gz"
+                     name="cdr_call2">
+            <DefaultRolloverStrategy/>
+            <PatternLayout pattern="%msg%n"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+            </Policies>
+        </RollingFile>
+
+    </Appenders>
+    <Loggers>
+        <Logger additivity="false" level="info" name="cdr_call">
+            <AppenderRef ref="cdr_call"/>
+        </Logger>
+
+        <Logger additivity="false" level="info" name="cdr_call2">
+            <AppenderRef ref="cdr_call2"/>
+        </Logger>
+        <Root level="info">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="ott_sdk_INFO"/>
+            <AppenderRef ref="ott_sdk_ERROR"/>
+        </Root>
+    </Loggers>
+</Configuration>
+
