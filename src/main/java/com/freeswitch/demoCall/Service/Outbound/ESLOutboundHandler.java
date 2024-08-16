@@ -46,7 +46,6 @@ public class ESLOutboundHandler extends AbstractOutboundClientHandler {
 
     public void callTransfer(ChannelHandlerContext ctx, EslEvent event) {
         String callee = event.getEventHeaders().get("Channel-Destination-Number");
-        System.out.println(callee);
         EventSocketAPI.addMemberToConference(ctx, "ringmecall", "user/1000");
         EventSocketAPI.addFlags(ctx, "ringmeCall");
         EventSocketAPI.hangupCall(ctx);

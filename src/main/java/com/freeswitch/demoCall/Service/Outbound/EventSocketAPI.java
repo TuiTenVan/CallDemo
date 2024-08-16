@@ -29,11 +29,11 @@ public class EventSocketAPI {
     public static void callToConference(ChannelHandlerContext ctx, String callee) {
         AbstractOutboundClientHandler handler = (AbstractOutboundClientHandler) ctx.getHandler();
         Channel channel = ctx.getChannel();
-        SendMsg bindMsg = new SendMsg();
-        bindMsg.addCallCommand("execute");
-        bindMsg.addExecuteAppName("conference");
-        bindMsg.addExecuteAppArg("bridge:ringmeCall:user/" + callee);
-        EslMessage response = handler.sendSyncMultiLineCommand(channel, bindMsg.getMsgLines());
+        SendMsg callMsg = new SendMsg();
+        callMsg.addCallCommand("execute");
+        callMsg.addExecuteAppName("conference");
+        callMsg.addExecuteAppArg("bridge:ringmeCall:user/" + callee);
+        EslMessage response = handler.sendSyncMultiLineCommand(channel, callMsg.getMsgLines());
         String replyText = response.getHeaderValue(EslHeaders.Name.REPLY_TEXT);
         if (replyText.startsWith("+OK")) {
             System.out.println("Conference action successful with callers: ");
@@ -44,13 +44,13 @@ public class EventSocketAPI {
     public static void addFlags(ChannelHandlerContext ctx, String conferenceName) {
         AbstractOutboundClientHandler handler = (AbstractOutboundClientHandler) ctx.getHandler();
         Channel channel = ctx.getChannel();
-        SendMsg kickMsg = new SendMsg();
-        kickMsg.addCallCommand("execute");
-        kickMsg.addExecuteAppName("conference");
-        kickMsg.addExecuteAppArg(conferenceName + "+flags{}");
-        kickMsg.addEventLock();
+        SendMsg flagMsg = new SendMsg();
+        flagMsg.addCallCommand("execute");
+        flagMsg.addExecuteAppName("conference");
+        flagMsg.addExecuteAppArg(conferenceName + "+flags{}");
+        flagMsg.addEventLock();
         try {
-            EslMessage response = handler.sendSyncMultiLineCommand(channel, kickMsg.getMsgLines());
+            EslMessage response = handler.sendSyncMultiLineCommand(channel, flagMsg.getMsgLines());
             String replyText = response.getHeaderValue(EslHeaders.Name.REPLY_TEXT);
             if (replyText.startsWith("+OK")) {
                 System.out.println("Successfully");
