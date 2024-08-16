@@ -481,7 +481,6 @@ public class ESLInboundHandler {
         }
     };
     public static String convertTimestampToStringDate(long stamp) {
-
 //        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
         return formatter2.get().format(new Date(stamp));
     }
