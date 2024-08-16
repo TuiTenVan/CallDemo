@@ -1,6 +1,6 @@
 package com.freeswitch.demoCall.Controller;
 
-import com.freeswitch.demoCall.Service.Outbound.ESLOutboundListenerService;
+import com.freeswitch.demoCall.Service.Inbound.ESLInboundManager;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -8,13 +8,11 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/api")
 @RequiredArgsConstructor
 public class CallController {
+    private final ESLInboundManager eslInboundManager;
 
-    private final ESLOutboundListenerService eslOutboundListenerService;
-
-//    @PostMapping("/conference/kick-and-add")
-//    public String kickAndAddToConference(@RequestParam String conferenceName, @RequestParam String userToKick, @RequestParam String userToAdd, ChannelHandlerContext ctx) {
-//        EventSocketAPI.kickAndAddToConference(ctx, conferenceName, userToKick, userToAdd);
-//        return "Kick and add request sent";
-//    }
-
+    @PostMapping("/transfer")
+    public String kickAndAddToConference(@RequestParam String callee) {
+        eslInboundManager.transfer(callee);
+        return "Kick and add request sent";
+    }
 }

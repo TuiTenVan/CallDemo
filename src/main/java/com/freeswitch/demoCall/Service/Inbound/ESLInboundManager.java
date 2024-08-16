@@ -58,9 +58,22 @@ public class ESLInboundManager {
         }
     }
 
+    public void transfer(String callee) {
+        try {
+            ESLInboundHandler eslInboundHandler = runningFreeswitchs.get(0);
+            if (eslInboundHandler != null && eslInboundHandler.isConnected()) {
+                eslInboundHandler.transfer(callee);
+                logger.info("Transfer thành công.");
+            } else {
+                logger.warn("Không thể gọi Transfer() vì ESLInboundHandler không kết nối hoặc không tồn tại.");
+            }
+        } catch (Exception e) {
+            logger.error("[ESLInboundManager] Lỗi khi gọi transfer()", e);
+        }
+    }
+
     @Scheduled(fixedRate = 60000)
     public void run() {
-
         pendingFreeswitchs.keySet().forEach(num -> {
             ESLInboundHandler fsConnection = pendingFreeswitchs.get(num);
             if (fsConnection.isConnected()) {
@@ -79,6 +92,4 @@ public class ESLInboundManager {
         });
         logger.info("Finish checking ESL Inbound pending({}), running({})", pendingFreeswitchs.size(), runningFreeswitchs.size());
     }
-
-
 }

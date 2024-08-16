@@ -32,9 +32,7 @@ public class EventSocketAPI {
         SendMsg bindMsg = new SendMsg();
         bindMsg.addCallCommand("execute");
         bindMsg.addExecuteAppName("conference");
-//        bindMsg.addExecuteAppArg(conferenceName);
         bindMsg.addExecuteAppArg("bridge:ringmeCall:user/" + callee);
-//        bindMsg.addEventLock();
         EslMessage response = handler.sendSyncMultiLineCommand(channel, bindMsg.getMsgLines());
         String replyText = response.getHeaderValue(EslHeaders.Name.REPLY_TEXT);
         if (replyText.startsWith("+OK")) {
