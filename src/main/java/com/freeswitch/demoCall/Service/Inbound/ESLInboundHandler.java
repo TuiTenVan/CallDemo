@@ -92,13 +92,12 @@ public class ESLInboundHandler {
 
     private void handleHangupComplete(EslEvent event) {
         printLog(event);
-        Map<String, String> map = getCDRFromESLEvent(event);
-        String callee = event.getEventHeaders().get("Caller-Destination-Number");
-        if (callee != null) {
-            if (!callee.equals("1000")) {
-                inboundClient.sendAsyncApiCommand("conference", "ringmeCall kick all");
-            }
-        }
+//        String callee = event.getEventHeaders().get("Caller-Destination-Number");
+//        if (callee != null) {
+//            if (!callee.equals("1000")) {
+//                inboundClient.sendAsyncApiCommand("conference", "ringmeCall kick all");
+//            }
+//        }
     }
 
 
@@ -210,31 +209,258 @@ public class ESLInboundHandler {
                 map.put("bridge_hangup_cause", eventHeaders.get("variable_hangup_cause"));
             }
 
-//            Map<String, String> customs = convertCustomStatus(map);
-//            map.putAll(customs);
-//            if (customs.get("status") != null && customs.get("status").equals("answered")) {
-//                if (map.get("ivr") != null) {
-//                    if (eventHeaders.get("variable_execute_on_answer") != null &&
-//                            eventHeaders.get("variable_execute_on_answer").contains("record_session")) {
-//
-//                        int startIndex = eventHeaders.get("variable_execute_on_answer").indexOf("/call-record");
-//                        int endIndex = eventHeaders.get("variable_execute_on_answer").indexOf(".wav");
-//                        String path = eventHeaders.get("variable_execute_on_answer").substring(startIndex + 12, endIndex + 4);
-////                        map.put("domain_record", configuration.getUatDomain());
-////                        map.put("link_record", configuration.getApi2Prefix() + path);
-//                    }
-//                } else if (eventHeaders.get("variable_last_arg") != null &&
-//                        (eventHeaders.get("variable_last_arg").contains("record_session") ||
-//                                eventHeaders.get("variable_last_arg").endsWith(".wav"))) {
-//                    // record link
-////                    map.putAll(getLinkRecord(eventHeaders));
-//                }
-//                long waitDuration = Long.parseLong(map.get("total-duration")) - Long.parseLong(map.get("duration"));
-//                map.put("wait-duration", String.valueOf(waitDuration));
-//            }
+            Map<String, String> customs = convertCustomStatus(map);
+            map.putAll(customs);
+            if (customs.get("status") != null && customs.get("status").equals("answered")) {
+                if (map.get("ivr") != null) {
+                    if (eventHeaders.get("variable_execute_on_answer") != null &&
+                            eventHeaders.get("variable_execute_on_answer").contains("record_session")) {
+
+                        int startIndex = eventHeaders.get("variable_execute_on_answer").indexOf("/call-record");
+                        int endIndex = eventHeaders.get("variable_execute_on_answer").indexOf(".wav");
+                        String path = eventHeaders.get("variable_execute_on_answer").substring(startIndex + 12, endIndex + 4);
+//                        map.put("domain_record", configuration.getUatDomain());
+//                        map.put("link_record", configuration.getApi2Prefix() + path);
+                    }
+                } else if (eventHeaders.get("variable_last_arg") != null &&
+                        (eventHeaders.get("variable_last_arg").contains("record_session") ||
+                                eventHeaders.get("variable_last_arg").endsWith(".wav"))) {
+                    // record link
+//                    map.putAll(getLinkRecord(eventHeaders));
+                }
+                long waitDuration = Long.parseLong(map.get("total-duration")) - Long.parseLong(map.get("duration"));
+                map.put("wait-duration", String.valueOf(waitDuration));
+            }
             logger.info(map);
         }
         return map;
+    }
+    private Map<String, String> convertCustomStatus(Map<String, String> map) {
+        Map<String, String> customs = new HashMap<>();
+        String status = "", callStatus = "", callStatusCode = "",
+                customCallStatus = "", customCallStatusCode = "", closedBy = "";
+        boolean isEndCall = map.get("hangup_cause").equals("NORMAL_CLEARING") &&
+                (map.get("type_call").equals("ctx_callin") ||
+                        (map.get("bridge_hangup_cause") != null && map.get("bridge_hangup_cause").equals("NORMAL_CLEARING")));
+
+        if (map.get("type_call").equals("ctx_callout")) {
+
+            if ((map.get("hangup_cause").equals("NORMAL_UNSPECIFIED") || !isEndCall) &&
+                    map.get("duration") != null && Long.parseLong(map.get("duration")) > 0) {
+                logger.info("CALLOUT|" + map.get("caller") + "|" + map.get("callee") + "|" + map.get("call_id") +
+                        "|CHANGE_OTHER_HANGUP_CAUSE|" + map.get("hangup_cause"));
+                isEndCall = true;
+            }
+
+            if (isEndCall) {
+                status = "answered";
+                callStatus = "Callee Hangup";
+                callStatusCode = "203";
+                closedBy = "callee";
+
+                customCallStatus = "answered";
+                customCallStatusCode = "489";
+            } else if (map.get("sip_invite_failure_status") != null) {
+                status = "no-answered";
+                if (map.get("hangup_cause").equals("ORIGINATOR_CANCEL")) {
+
+                    callStatus = "Caller Cancel";
+                    callStatusCode = "487";
+                    closedBy = "caller";
+
+                    customCallStatus = "noanswers";
+                    customCallStatusCode = "487";
+                } else if (map.get("sip_invite_failure_status").equals("480")) {
+                    if (map.get("bridge_hangup_cause") != null && map.get("bridge_hangup_cause").equals("NO_ANSWER")) {
+
+                        // callee cancel + timeout
+                        callStatus = "Callee Cancel"; //chưa định nghĩa Callee Cancel cho vnpost
+                        callStatusCode = "488";
+                        closedBy = "callee";
+
+                        customCallStatus = "noanswers";
+                        customCallStatusCode = "487";
+                    } else if (map.get("originate_failed_cause") != null &&
+                            map.get("originate_failed_cause").equals("NO_ANSWER") && map.get("bridge_hangup_cause") == null) {
+
+                        // busy
+                        status = "busy";
+                        callStatus = "Busy";
+                        callStatusCode = "480";
+                        closedBy = "callee";
+
+                        customCallStatus = "busy";
+                        customCallStatusCode = "486";
+                    } else {
+
+                        callStatus = "Unavailable";
+                        callStatusCode = "491";
+                        closedBy = "callee";
+
+                        customCallStatus = "telerror";
+                        customCallStatusCode = "491";
+                    }
+                } else if (map.get("sip_invite_failure_status").equals("403") ||
+                        map.get("sip_invite_failure_status").equals("503")) {
+
+                    callStatus = "Unavailable";
+                    callStatusCode = "491";
+                    closedBy = "callee";
+
+                    customCallStatus = "telerror";
+                    customCallStatusCode = "491";
+                } else {
+                    // callee hangup
+                    callStatus = "Busy";
+                    callStatusCode = "480";
+                    closedBy = "callee";
+
+                    customCallStatus = "busy";
+                    customCallStatusCode = "486";
+                }
+            } else {
+                if (map.get("bridge_hangup_cause") != null &&
+                        map.get("bridge_hangup_cause").equals("ORIGINATOR_CANCEL")) {
+                    // timeout
+                    status = "no-answered";
+                    callStatus = "Timeout";
+                    callStatusCode = "488";
+                    closedBy = "caller";
+
+                    customCallStatus = "noanswers";
+                    customCallStatusCode = "487";
+                } else if (map.get("hangup_cause").equals("MEDIA_TIMEOUT")) {
+
+                    if (map.get("duration") != null && Long.parseLong(map.get("duration")) >= 2) {
+
+                        status = "answered";
+                        callStatus = "Callee Hangup";
+                        callStatusCode = "203";
+
+                        customCallStatus = "answered";
+                        customCallStatusCode = "489";
+
+                        logger.info("CALLOUT|" + map.get("caller") + "|" + map.get("callee") + "|" + map.get("call_id") +
+                                "|MEDIA_TIMEOUT|answered|" + map.get("duration"));
+                    } else if (map.get("bridge_hangup_cause") != null &&
+                            map.get("bridge_hangup_cause").equals("NORMAL_CLEARING")) {
+                        status = "no-answered";
+                        callStatus = map.get("hangup_cause");
+                        callStatusCode = "499";
+
+                        customCallStatus = "error";
+                        customCallStatusCode = "494";
+                    } else {
+                        status = "no-answered";
+                        callStatus = "Unavailable";
+                        callStatusCode = "491";
+
+
+                        customCallStatus = "telerror";
+                        customCallStatusCode = "491";
+                    }
+                    closedBy = "callee";
+                } else {
+
+                    status = "no-answered";
+                    callStatus = "Unavailable";
+                    callStatusCode = "491";
+                    closedBy = "callee";
+
+                    customCallStatus = "telerror";
+                    customCallStatusCode = "491";
+                }
+            }
+        }
+//        } else if (map.get("type_call").equals("ctx_callin")) {
+//            Integer redisCallinCode = redisService.getRecentCallinCode(map.get("call_id"));
+//
+//            if (isEndCall) {
+//                status = "answered";
+//                if (redisCallinCode != null) {
+//
+//                    callStatus = "Callee Hangup";
+//                    callStatusCode = "203";
+//                    closedBy = "callee";
+//
+//                } else {
+//
+//                    callStatus = "Caller Hangup";
+//                    callStatusCode = "204";
+//                    closedBy = "caller";
+//                }
+//
+//                customCallStatus = "answered";
+//                customCallStatusCode = "602";
+//            } else if (map.get("sip_invite_failure_status") != null) {
+//                status = "no-answered";
+//                if (map.get("hangup_cause").equals("ORIGINATOR_CANCEL")) {
+//
+//                    callStatus = "Caller Cancel";
+//                    callStatusCode = "487";
+//                    closedBy = "caller";
+//
+//                    customCallStatus = "noanswers";
+//                    customCallStatusCode = "600";
+//                } else if (redisCallinCode != null) {
+//                    if (redisCallinCode == 486) {
+//                        callStatus = "Busy";
+//                        callStatusCode = "480";
+//                        closedBy = "callee";
+//
+//                        customCallStatus = "busy";
+//                        customCallStatusCode = "605";
+//                    } else if (redisCallinCode == 488) {
+//                        callStatus = "Callee Cancel";
+//                        callStatusCode = "488";
+//                        closedBy = "callee";
+//
+//                        customCallStatus = "noanswers";
+//                        customCallStatusCode = "600";
+//                    } else if (redisCallinCode == 489) {
+//                        callStatus = "Timeout";
+//                        callStatusCode = "489";
+//                        closedBy = "callee";
+//
+//                        customCallStatus = "noanswers";
+//                        customCallStatusCode = "600";
+//                    }
+//
+//                } else if (map.get("hangup_cause").equals("USER_BUSY") &&
+//                        map.get("sip_invite_failure_status").equals("486")) {
+//                    callStatus = "Callee Cancel";
+//                    callStatusCode = "488";
+//                    closedBy = "callee";
+//
+//                    customCallStatus = "noanswers";
+//                    customCallStatusCode = "600";
+//                } else {
+//                    callStatus = "Timeout";
+//                    callStatusCode = "489";
+//                    closedBy = "callee";
+//
+//                    customCallStatus = "noanswers";
+//                    customCallStatusCode = "600";
+//                }
+//            }
+//            else {
+//                status = "no-answered";
+//                callStatus = map.get("hangup_cause");
+//                callStatusCode = "488";
+//                closedBy = "callee";
+//
+//                customCallStatus = "noanswers";
+//                customCallStatusCode = "600";
+//            }
+//        }
+        customs.put("status", status);
+        customs.put("callStatus", callStatus);
+        customs.put("callStatusCode", callStatusCode);
+        customs.put("closedBy", closedBy);
+
+        customs.put("customCallStatus", customCallStatus);
+        customs.put("customCallStatusCode", customCallStatusCode);
+        return customs;
     }
 
     private void printLog(EslEvent event) {
