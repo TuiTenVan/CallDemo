@@ -22,25 +22,10 @@ public class EventSocketAPI {
 
         boolean isResult = response.getHeaderValue(Name.REPLY_TEXT).startsWith("+OK");
         if (!isResult) {
-            System.out.println("Call hangup failed:" + response.getHeaderValue(Name.REPLY_TEXT));
+            log.error("Call hangup failed:{}", response.getHeaderValue(Name.REPLY_TEXT));
         }
     }
 
-    public static void callToConference(ChannelHandlerContext ctx, String callee) {
-        AbstractOutboundClientHandler handler = (AbstractOutboundClientHandler) ctx.getHandler();
-        Channel channel = ctx.getChannel();
-        SendMsg callMsg = new SendMsg();
-        callMsg.addCallCommand("execute");
-        callMsg.addExecuteAppName("conference");
-        callMsg.addExecuteAppArg("bridge:ringmeCall:user/" + callee);
-        EslMessage response = handler.sendSyncMultiLineCommand(channel, callMsg.getMsgLines());
-        String replyText = response.getHeaderValue(EslHeaders.Name.REPLY_TEXT);
-        if (replyText.startsWith("+OK")) {
-            System.out.println("Conference action successful with callers: ");
-        } else {
-            System.out.println("Conference action failed: " + replyText);
-        }
-    }
     public static void addFlags(ChannelHandlerContext ctx, String conferenceName) {
         AbstractOutboundClientHandler handler = (AbstractOutboundClientHandler) ctx.getHandler();
         Channel channel = ctx.getChannel();
@@ -53,12 +38,12 @@ public class EventSocketAPI {
             EslMessage response = handler.sendSyncMultiLineCommand(channel, flagMsg.getMsgLines());
             String replyText = response.getHeaderValue(EslHeaders.Name.REPLY_TEXT);
             if (replyText.startsWith("+OK")) {
-                System.out.println("Successfully");
+                log.info("Successfully add flag");
             } else {
-                System.out.println("Failed" + replyText);
+                log.error("Failed add flag{}", replyText);
             }
         } catch (Exception e) {
-            System.err.println("An error occurred " + e.getMessage());
+            log.error("An error occurred add flag{}", e.getMessage());
         }
     }
 
@@ -70,14 +55,12 @@ public class EventSocketAPI {
         addMsg.addExecuteAppName("conference_set_auto_outcall");
         addMsg.addExecuteAppArg(callee);
         addMsg.addEventLock();
-
         EslMessage response = handler.sendSyncMultiLineCommand(channel, addMsg.getMsgLines());
         String replyText = response.getHeaderValue(EslHeaders.Name.REPLY_TEXT);
-
         if (replyText.startsWith("+OK")) {
-            System.out.println("Successfully added " + callee + " to conference " + conferenceName);
+            log.info("Successfully added {} to conference {}", callee, conferenceName);
         } else {
-            System.out.println("Failed to add member: " + replyText);
+            log.error("Failed to add member: {}", replyText);
         }
     }
 
