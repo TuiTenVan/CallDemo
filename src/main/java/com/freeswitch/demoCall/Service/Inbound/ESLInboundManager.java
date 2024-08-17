@@ -58,11 +58,11 @@ public class ESLInboundManager {
         }
     }
 
-    public void transfer(String callee) {
+    public void transfer(String callee, String calleeTransfer) {
         try {
             ESLInboundHandler eslInboundHandler = runningFreeswitchs.get(0);
             if (eslInboundHandler != null && eslInboundHandler.isConnected()) {
-                eslInboundHandler.transfer(callee);
+                eslInboundHandler.transfer(callee, calleeTransfer);
                 logger.info("Transfer thành công.");
             } else {
                 logger.warn("Không thể gọi Transfer() vì ESLInboundHandler không kết nối hoặc không tồn tại.");

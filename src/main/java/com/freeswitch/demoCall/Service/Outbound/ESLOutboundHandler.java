@@ -20,11 +20,9 @@ public class ESLOutboundHandler extends AbstractOutboundClientHandler {
 
     @Override
     protected void handleConnectResponse(ChannelHandlerContext ctx, EslEvent event) {
-        System.out.println(event.getEventHeaders().get("Answer-State"));
         if (event.getEventName().equalsIgnoreCase("CHANNEL_DATA")) {
             if ("ringing".equalsIgnoreCase(event.getEventHeaders().get("Answer-State"))) {
                 callTransfer(ctx, event);
-                System.out.println(event.getEventHeaders());
             }
         } else {
             logger.warn("Unexpected event after connect: [" + event.getEventName() + ']');
@@ -33,19 +31,20 @@ public class ESLOutboundHandler extends AbstractOutboundClientHandler {
 
     @Override
     protected void handleEslEvent(ChannelHandlerContext ctx, EslEvent event) {
-        System.out.println("Received event: " + event);
-        String eventName = event.getEventName();
-        System.out.println(eventName);
+
     }
 
     @Override
     protected void handleDisconnectionNotice() {
         super.handleDisconnectionNotice();
-        System.out.println("Received disconnection notice");
     }
 
     public void callTransfer(ChannelHandlerContext ctx, EslEvent event) {
-        String callee = event.getEventHeaders().get("Channel-Destination-Number");
+        String caller = event.getEventHeaders().get("variable_effective_caller_id_name");
+        String numberCaller = event.getEventHeaders().get("variable_effective_caller_id_number");
+        EventSocketAPI.runCommand(ctx, "set", "conference_auto_outcall_caller_id_name=" + caller, true);
+        EventSocketAPI.runCommand(ctx, "set", "conference_auto_outcall_caller_id_number=" + numberCaller, true);
+
         EventSocketAPI.addMemberToConference(ctx, "ringmecall", "user/1000");
         EventSocketAPI.addFlags(ctx, "ringmeCall");
         EventSocketAPI.hangupCall(ctx);

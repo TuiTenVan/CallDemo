@@ -1,22 +1,24 @@
 package com.freeswitch.demoCall.Service.Inbound;
 
-import com.freeswitch.demoCall.model.CallCDR;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.freeswitch.esl.client.IEslEventListener;
 import org.freeswitch.esl.client.inbound.Client;
 import org.freeswitch.esl.client.transport.event.EslEvent;
 import org.freeswitch.esl.client.transport.CommandResponse;
+import org.freeswitch.esl.client.transport.message.EslMessage;
 import org.springframework.context.ApplicationContext;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class ESLInboundHandler {
 
     private final Logger logger = LogManager.getLogger(ESLInboundHandler.class);
+    private final String conferenceName = "ringmeCall";
 
     private Client inboundClient;
 
@@ -25,7 +27,7 @@ public class ESLInboundHandler {
             inboundClient = new Client();
             startEslInboundListener(inboundClient);
         } catch (Exception ex) {
-            System.out.println(ex.getMessage());
+            logger.error(ex.getMessage(), ex);
         }
     }
 
@@ -38,21 +40,18 @@ public class ESLInboundHandler {
             inboundClient = new Client();
             startEslInboundListener(inboundClient);
         } catch (Exception ex) {
-            System.out.println(ex.getMessage());
+            logger.error(ex.getMessage(), ex);
         }
-    }
-
-    public void transfer(String callee) {
-        inboundClient.sendAsyncApiCommand("conference", "ringmeCall dial user/" + callee);
-        inboundClient.sendAsyncApiCommand("conference", "ringmeCall kick last");
     }
 
     public void disconnect() {
         CommandResponse commandResponse = inboundClient.close();
-        System.out.println(commandResponse);
+        logger.info(commandResponse);
     }
+
     private void startEslInboundListener(Client inboudClient) {
         try {
+            logger.info("FREESWITCH ESL: {} {}", "localhost", 8021);
             inboundClient.connect("localhost", 8021, "ClueCon", 10);
             inboundClient.addEventFilter("Event-Name", "CHANNEL_HANGUP_COMPLETE");
             inboundClient.addEventFilter("Event-Name", "CHANNEL_ANSWER");
@@ -68,14 +67,13 @@ public class ESLInboundHandler {
                             handleHangupComplete(event);
                             break;
                         default:
-                            System.out.println("Unhandled event: " + eventName + " -> " + event.getEventHeaders().get("variable_sip_call_id"));
                             break;
                     }
                 }
                 @Override
-                public void backgroundJobResultReceived(EslEvent event) {
-                    String jobUuid = event.getEventHeaders().get("Job-UUID");
-                    System.out.println("Background job result received: " + jobUuid);
+                public void backgroundJobResultReceived(EslEvent eslEvent) {
+                    logger.info("===============================backgroundJobResultReceived===============================");
+                    printLog(eslEvent);
                 }
             });
             inboudClient.setEventSubscriptions("plain", "all");
@@ -85,22 +83,64 @@ public class ESLInboundHandler {
     }
 
     private void handleChannelAnswer(EslEvent event) {
-        String callUUID = event.getEventHeaders().get("Channel-Call-UUID");
-//        System.out.println("Channel answered: " + callUUID);
-//        printLog(event);
+
     }
 
+    public void transfer(String callee, String calleeTransfer) throws InterruptedException {
+        inboundClient.sendAsyncApiCommand("conference", "ringmeCall dial user/" + calleeTransfer);
+        inboundClient.addEventListener(new IEslEventListener() {
+            @Override
+            public void eventReceived(EslEvent eslEvent) {
+                if (eslEvent.getEventName().equals("CHANNEL_ANSWER")) {
+                    boolean checkCalleeTransfer = false;
+                    while (!checkCalleeTransfer){
+                        EslMessage response = listConferences();
+                        List<String> attendCalls = response.getBodyLines();
+                        for (String line : attendCalls) {
+                            if (line.contains(calleeTransfer)) {
+                                kickUserFromConference(callee);
+                                checkCalleeTransfer = true;
+                                break;
+                            }
+                        }
+                    }
+                } else if (eslEvent.getEventName().equals("CHANNEL_HANGUP_COMPLETE")) {
+                    if(eslEvent.getEventHeaders().get("Caller-Destination-Number").equals(calleeTransfer) ||
+                            !eslEvent.getEventHeaders().get("variable_effective_caller_id_number").equals(callee)){
+                        inboundClient.sendAsyncApiCommand("conference", conferenceName + " kick all");
+                    }
+                }
+            }
+            @Override
+            public void backgroundJobResultReceived(EslEvent eslEvent) {
+                logger.info("==============================backgroundJobResultReceived===============================");
+                printLog(eslEvent);
+            }
+        });
+    }
+
+    private EslMessage listConferences() {
+        return inboundClient.sendSyncApiCommand("conference", conferenceName + " list");
+    }
+    private void kickUserFromConference(String userId) {
+        EslMessage response = listConferences();
+        List<String> lines = response.getBodyLines();
+        String memberId = null;
+        for (String line : lines) {
+            if (line.contains(userId)) {
+                memberId = line.split(";")[0];
+                break;
+            }
+        }
+        if (memberId != null) {
+            inboundClient.sendAsyncApiCommand("conference", conferenceName + " kick " + memberId);
+            logger.info("Kicked user with ID: {}", memberId);
+        } else {
+            logger.info("User with ID {} not found in conference " + conferenceName, userId);
+        }
+    }
     private void handleHangupComplete(EslEvent event) {
-        printLog(event);
-//        String callee = event.getEventHeaders().get("Caller-Destination-Number");
-//        if (callee != null) {
-//            if (!callee.equals("1000")) {
-//                inboundClient.sendAsyncApiCommand("conference", "ringmeCall kick all");
-//            }
-//        }
     }
-
-
 
     private Map<String, String> getCDRFromESLEvent(EslEvent eslEvent) {
         Map<String, String> eventHeaders = eslEvent.getEventHeaders();
