@@ -37,6 +37,7 @@ public class SipProxy {
     private String domainXmpp;
 
 
+
     public static void send(SipMessageEvent sipEvent, SipMessage rq) {
         if (sipEvent != null && rq != null) {
             sipEvent.getConnection().send(rq);
@@ -85,9 +86,32 @@ public class SipProxy {
         String caller = SipUtil.getFromUser(req);
         String callee = SipUtil.getToUser(req);
         String callID = SipUtil.getCallID(req);
-
+//        handleBridge(event, caller, callee, callID);
     }
 
+    private void handleBridge(SipMessageEvent event, String caller, String callee, String callID) {
+        final String PREFIX_LOG_CALLIN = "BRIDGE_CALL|" + caller + "|" + callee + "|" + callID + "|";
+        logger.info("{}START", PREFIX_LOG_CALLIN);
+
+//        UserInfo userInfo = userInfoDao.getUserInfoByUsername(callee);
+//        logger.info("{}{}: {}", PREFIX_LOG_CALLIN, callee, userInfo);
+
+        UA ua = new UA(event);
+//        ua.setIvr(true);
+        ua.setCaller(caller);
+        ua.setCallee("+84911111121");
+        ua.setJid(callee + "@192.168.1.78");
+        CallInMgr.instance().put(ua);
+
+
+        Message message = makeXmppMessageCallinInvitte(caller,
+                ua.getCallerName(),
+                ua.getCallee(), ua.getJid(), getSdp(event),
+                callID, null, false);
+
+        sendMessage(message);
+        logger.info("{}SEND INVITE MESSAGE TO XMPP", PREFIX_LOG_CALLIN);
+    }
 
     private void onReceiveCancel(SipMessageEvent event) {
         final SipResponse response = event.getMessage().createResponse(200);

@@ -1,13 +1,1 @@
-2024-08-14 20:26:45 INFO  DemoCallApplication:50 - Starting DemoCallApplication using Java 17.0.12 with PID 10959 (/home/vannv/Documents/demoCall/target/classes started by vannv in /home/vannv/Documents/demoCall)
-2024-08-14 20:26:45 INFO  DemoCallApplication:654 - No active profile set, falling back to 1 default profile: "default"
-2024-08-14 20:26:45 INFO  TomcatWebServer:111 - Tomcat initialized with port 8080 (http)
-2024-08-14 20:26:45 INFO  Http11NioProtocol:173 - Initializing ProtocolHandler ["http-nio-8080"]
-2024-08-14 20:26:45 INFO  StandardService:173 - Starting service [Tomcat]
-2024-08-14 20:26:45 INFO  StandardEngine:173 - Starting Servlet engine: [Apache Tomcat/10.1.26]
-2024-08-14 20:26:45 INFO  [/]:173 - Initializing Spring embedded WebApplicationContext
-2024-08-14 20:26:45 INFO  ServletWebServerApplicationContext:296 - Root WebApplicationContext: initialization completed in 556 ms
-2024-08-14 20:26:45 INFO  Http11NioProtocol:173 - Starting ProtocolHandler ["http-nio-8080"]
-2024-08-14 20:26:45 INFO  TomcatWebServer:243 - Tomcat started on port 8080 (http) with context path '/'
-2024-08-14 20:26:45 INFO  DemoCallApplication:56 - Started DemoCallApplication in 1.13 seconds (process running for 1.935)
-2024-08-14 20:26:45 INFO  LeaderElectionStartupRunner:25 - startLeaderElectionWatcher|init
-2024-08-14 20:27:56 INFO  Http11NioProtocol:173 - Stopping ProtocolHandler ["http-nio-8080"]
+

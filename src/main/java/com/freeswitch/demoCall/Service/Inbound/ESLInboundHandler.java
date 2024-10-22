@@ -1,28 +1,32 @@
 package com.freeswitch.demoCall.Service.Inbound;
 
+
+import com.freeswitch.demoCall.Service.Outbound.queue.CallToQueue;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.freeswitch.esl.client.IEslEventListener;
 import org.freeswitch.esl.client.inbound.Client;
-import org.freeswitch.esl.client.transport.event.EslEvent;
 import org.freeswitch.esl.client.transport.CommandResponse;
+import org.freeswitch.esl.client.transport.SendMsg;
+import org.freeswitch.esl.client.transport.event.EslEvent;
 import org.freeswitch.esl.client.transport.message.EslMessage;
 import org.springframework.context.ApplicationContext;
 
+import java.security.InvalidParameterException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 public class ESLInboundHandler {
 
     private final Logger logger = LogManager.getLogger(ESLInboundHandler.class);
-    private final String conferenceName = "ringmeCall";
-
     private Client inboundClient;
+    private String firstCallId = null;
+    private CallToQueue callToQueue;
 
     public ESLInboundHandler(String ip, ApplicationContext context) {
+        this.callToQueue = context.getBean(CallToQueue.class);
         try {
             inboundClient = new Client();
             startEslInboundListener(inboundClient);
@@ -49,17 +53,22 @@ public class ESLInboundHandler {
         logger.info(commandResponse);
     }
 
-    private void startEslInboundListener(Client inboudClient) {
+    private void startEslInboundListener(Client inboundClient) {
         try {
             logger.info("FREESWITCH ESL: {} {}", "localhost", 8021);
             inboundClient.connect("localhost", 8021, "ClueCon", 10);
             inboundClient.addEventFilter("Event-Name", "CHANNEL_HANGUP_COMPLETE");
             inboundClient.addEventFilter("Event-Name", "CHANNEL_ANSWER");
+            inboundClient.addEventFilter("Event-Name", "DTMF");
             inboundClient.addEventListener(new IEslEventListener() {
                 @Override
                 public void eventReceived(EslEvent event) {
                     String eventName = event.getEventName();
+                    System.out.println(eventName);
                     switch (eventName) {
+                        case "DTMF":
+                            handleDtmfAction(event);
+                            break;
                         case "CHANNEL_ANSWER":
                             handleChannelAnswer(event);
                             break;
@@ -76,80 +85,227 @@ public class ESLInboundHandler {
                     printLog(eslEvent);
                 }
             });
-            inboudClient.setEventSubscriptions("plain", "all");
+            inboundClient.setEventSubscriptions("plain", "all");
         } catch (Exception t) {
             System.out.println(t.getMessage());
         }
     }
 
-    private void handleChannelAnswer(EslEvent event) {
-
+    private void handleDtmfAction(EslEvent eslEvent) {
+        String digit = eslEvent.getEventHeaders().get("DTMF-Digit");
+        String callId = eslEvent.getEventHeaders().get("Unique-ID");
+        String caller = eslEvent.getEventHeaders().get("Caller-Orig-Caller-ID-Number");
+        String callee = eslEvent.getEventHeaders().get("Caller-Destination-Number");
+        logger.info("DTMF|caller={}|callee={}|callId={}|digit={}", caller, callee, callId, digit);
+//        final String prefixLog = "CALL_IVR_1|" + callId + "|";
+//        callToQueue.handleBridgeQueueAction(inboundClient, eslEvent, prefixLog, callId, caller);
+        if ("1".equals(digit)) {
+            final String prefixLog = "CALL_IVR_1|" + callId + "|";
+            callToQueue.handleBridgeQueueAction(inboundClient, eslEvent, prefixLog, callId, caller);
+            logger.info("DTMF 1 pressed");
+        } else {
+            final String prefixLog = "CALL_IVR_2|" + callId + "|";
+            callToQueue.handleBridgeToCall(inboundClient, eslEvent, prefixLog, callId, caller);
+            logger.info("DTMF 2 pressed");
+        }
     }
 
-    public void transfer(String callee, String calleeTransfer) throws InterruptedException {
-        inboundClient.sendAsyncApiCommand("conference", "ringmeCall dial user/" + calleeTransfer);
-        inboundClient.addEventListener(new IEslEventListener() {
-            @Override
-            public void eventReceived(EslEvent eslEvent) {
-                if (eslEvent.getEventName().equals("CHANNEL_ANSWER")) {
-                    boolean checkCalleeTransfer = false;
-                    while (!checkCalleeTransfer){
-                        EslMessage response = listConferences();
-                        List<String> attendCalls = response.getBodyLines();
-                        for (String line : attendCalls) {
-                            if (line.contains(calleeTransfer)) {
-                                kickUserFromConference(callee);
-                                checkCalleeTransfer = true;
-                                break;
-                            }
-                        }
-                    }
-                } else if (eslEvent.getEventName().equals("CHANNEL_HANGUP_COMPLETE")) {
-                    if(eslEvent.getEventHeaders().get("Caller-Destination-Number").equals(calleeTransfer) ||
-                            !eslEvent.getEventHeaders().get("variable_effective_caller_id_number").equals(callee)){
-                        inboundClient.sendAsyncApiCommand("conference", conferenceName + " kick all");
+
+    public void transferCall(String callId, String caller, String oldCallee, String newCallee, int type) {
+
+        EslMessage list = inboundClient.sendSyncApiCommand( "conference",
+                 " list");
+        logger.info(list.getBodyLines());
+        if (list.getBodyLines().size() == 1 && list.getBodyLines().get(0).equals("-ERR Conference " + callId + " not found")) {
+
+            throw new InvalidParameterException("transferCall callId not true"); // TODO
+        }
+        if(type == 5){ // 5 = interrupt
+            String command = "ringmeconf hup all";
+            logger.info("transferCall|type={}|conference {}| caller {}| callee {}", type, command, caller, oldCallee);
+            inboundClient.sendAsyncApiCommand( "conference", command);
+        }
+        else if (type == 1 || type == 2 || type == 3 || type == 4) { // 1 = transfer , 2 = rob, 3 = nghe len, 4 = join, 5 = hangup
+            String confIdKick = "last";
+            if ((type != 3 && type != 4) && !list.getBodyLines().isEmpty()) {
+                for (String bodyLine : list.getBodyLines()) {
+                    if (bodyLine.contains(oldCallee)) {
+                        confIdKick = bodyLine.split(";")[0];
+                        break;
                     }
                 }
             }
-            @Override
-            public void backgroundJobResultReceived(EslEvent eslEvent) {
-                logger.info("==============================backgroundJobResultReceived===============================");
-                printLog(eslEvent);
+
+            String fsGw = "{ringme_type_transfer=" + type + ",ringme_call_id=" + callId;
+            if (type != 3 && type != 4) {
+                fsGw = fsGw + ",api_on_answer='sched_api +1 none conference " + callId + " hup " + confIdKick + "'";
+            } else if (type == 3){
+                fsGw = fsGw + ",api_on_answer='conference " + callId + " mute last'";
+            } else{
+                fsGw = fsGw + ",api_on_answer='conference ringmeconf";
             }
-        });
+            fsGw = fsGw + "}user/";
+
+            String command =  "ringmeconf dial " +
+                    fsGw  + newCallee + (type == 2 ? "_rob" : "");
+
+            logger.info("transferCall|type={}|conference {}", type, command);
+            inboundClient.sendAsyncApiCommand( "conference", command);
+        } else { // transfer to hotline
+            String uuidCaller = null;
+            if (!list.getBodyLines().isEmpty()) {
+                for (String bodyLine : list.getBodyLines()) {
+                    if (bodyLine.contains(caller)) {
+                        uuidCaller = bodyLine.split(";")[2];
+                        break;
+                    }
+                }
+            }
+            logger.info("transferCall|type={}| uuid_transfer {} {}", type, uuidCaller, newCallee);
+            inboundClient.sendAsyncApiCommand( "uuid_transfer",
+                    uuidCaller + " " + newCallee);
+        }
     }
 
-    private EslMessage listConferences() {
-        return inboundClient.sendSyncApiCommand("conference", conferenceName + " list");
-    }
-    private void kickUserFromConference(String userId) {
-        EslMessage response = listConferences();
-        List<String> lines = response.getBodyLines();
-        String memberId = null;
-        for (String line : lines) {
-            if (line.contains(userId)) {
-                memberId = line.split(";")[0];
-                break;
+//    public void musicOnHold(String callId, String caller) {
+//        EslMessage list = inboundClient.sendSyncApiCommand("conference", callId + "list");
+//        logger.info(String.join("\n", list.getBodyLines()));
+//        if (list.getBodyLines().size() == 1 && list.getBodyLines().get(0).equals("-ERR Conference " + callId + " not found")) {
+//            throw new IllegalArgumentException("transferCall callId not true");
+//        }
+//        else if(list.getBodyLines().size() == 1 && list.getBodyLines().get(0).equals("+OK No active conferences.")){
+//            holdCall(callId, caller);  // call bridge
+//        }
+//        else{ // conference
+//            String uuidCaller = null;
+//            if (!list.getBodyLines().isEmpty()) {
+//                for (String bodyLine : list.getBodyLines()) {
+//                    if (bodyLine.contains(caller)) {
+//                        uuidCaller = bodyLine.split(";")[2];
+//                        break;
+//                    }
+//                }
+//            }
+//            holdCall(uuidCaller, caller);
+//        }
+//    }
+//private void holdCall(String callId, String caller) {
+//    String holdFlag = inboundClient.sendSyncApiCommand("uuid_getvar", callId + " hold_flag").getBodyLines().get(0);
+//    logger.info("Hold flag: {}", holdFlag);
+//    if (!holdFlag.equals("true")) {
+//        inboundClient.sendSyncApiCommand("uuid_displace", callId + " start /etc/freeswitch/call-record/sounds/holdcall.wav 0 loop");
+//        logger.info("Start music on hold | callId: {} | caller: {}", callId, caller);
+//        inboundClient.sendSyncApiCommand("uuid_setvar", callId + " hold_flag true");
+//    } else {
+//        inboundClient.sendSyncApiCommand("uuid_displace", callId + " stop /etc/freeswitch/call-record/sounds/holdcall.wav");
+//        logger.info("Stop music on hold | callId: {} | caller: {}", callId, caller);
+//        inboundClient.sendSyncApiCommand("uuid_setvar", callId + " hold_flag false");
+//    }
+//}
+    public void musicOnHold(String callId, String caller) {
+        EslMessage list = inboundClient.sendSyncApiCommand("conference", callId + "list");
+        logger.info(list.getBodyLines());
+        if (list.getBodyLines().size() == 1 && list.getBodyLines().get(0).equals("-ERR Conference " + callId + " not found")) {
+            throw new InvalidParameterException("transferCall callId not true");
+        }
+        EslMessage listUuid = inboundClient.sendSyncApiCommand("show", "channels like" + callId);
+        logger.info(listUuid.getBodyLines());
+        if (!listUuid.getBodyLines().isEmpty()) {
+            String uuidCaller = listUuid.getBodyLines().get(1).split(",")[0];
+            String holdFlag = inboundClient.sendSyncApiCommand("uuid_getvar", uuidCaller + " hold_flag").getBodyLines().get(0);
+            logger.info("Hold flag: {}", holdFlag);
+            if (!holdFlag.equals("true")) {
+                inboundClient.sendSyncApiCommand("uuid_displace", uuidCaller + " start /etc/freeswitch/call-record/sounds/holdcall.wav 0 loop");
+                logger.info("Start music on hold | callId: {} | caller: {}", callId, caller);
+                inboundClient.sendSyncApiCommand("uuid_setvar", uuidCaller + " hold_flag true");
+            } else {
+                inboundClient.sendSyncApiCommand("uuid_displace", uuidCaller + " stop /etc/freeswitch/call-record/sounds/holdcall.wav");
+                logger.info("Stop music on hold | callId: {} | caller: {}", callId, caller);
+                inboundClient.sendSyncApiCommand("uuid_setvar", uuidCaller + " hold_flag false");
             }
-        }
-        if (memberId != null) {
-            inboundClient.sendAsyncApiCommand("conference", conferenceName + " kick " + memberId);
-            logger.info("Kicked user with ID: {}", memberId);
         } else {
-            logger.info("User with ID {} not found in conference " + conferenceName, userId);
+            throw new InvalidParameterException("No active channels found");
         }
     }
-    private void handleHangupComplete(EslEvent event) {
+
+
+    private long getSetUpDurationForAnswer(Map<String, String> eventHeaders) {
+        String timeAnswer = eventHeaders.get("Caller-Channel-Answered-Time");
+        long timeInviteStamp = 0;
+        if (eventHeaders.get("variable_sip_invite_stamp") != null) {
+            timeInviteStamp = Long.parseLong(eventHeaders.get("variable_sip_invite_stamp"));
+        } else if (eventHeaders.get("Caller-Channel-Created-Time") != null) {
+            timeInviteStamp = Long.parseLong(eventHeaders.get("Caller-Channel-Created-Time"));
+        }
+        long timeAnswerStamp = Long.parseLong(timeAnswer);
+        double d = (timeAnswerStamp - timeInviteStamp) / 1000000d;
+        long setupDuration = (long) Math.ceil(d);
+        logger.info("TIME_INVITE={}|TIME_ANSWER={}|SETUP_DURATION_MILLISEC={}", timeInviteStamp, timeAnswerStamp, d);
+        return setupDuration;
+    }
+    private void handleChannelAnswer(EslEvent eslEvent) {
+        Map<String, String> eventHeaders = eslEvent.getEventHeaders();
+        String callId = eventHeaders.get("variable_sip_call_id");
+        if (firstCallId == null) {
+            firstCallId = callId;
+        }
+
+        String typeCall = eventHeaders.get("Caller-Context");
+
+
+        logger.info("TYPE_CALL={}|CALL_ID={}", typeCall, callId);
+        if (typeCall.equals("company-a") || typeCall.equals("default")) {
+            String timeAnswer = eventHeaders.get("Caller-Channel-Answered-Time");
+            logger.info("TIME-ANSWER={}", timeAnswer);
+            long setupDuration = 0L;
+            if (eventHeaders.get("variable_sip_invite_stamp") != null || eventHeaders.get("Caller-Channel-Created-Time") != null) {
+                setupDuration = getSetUpDurationForAnswer(eventHeaders);
+                logger.info("DURATION={}", setupDuration);
+            } else {
+                logger.info("====================> {} --- {}", eventHeaders.get("variable_start_epoch"),
+                        eventHeaders.get("variable_answer_epoch"));
+            }
+
+        }
+    }
+    private void handleHangupComplete(EslEvent eslEvent) {
+        Map<String, String> map = getCDRFromESLEvent(eslEvent);
+        try{
+            logger.info("Go to handle hangup event|state:{}|type_call:{}|caller-for-callout:{}|callee-for-callin:{}|callId:{}",
+                    map.get("state"),
+                    map.get("type_call"),
+                    eslEvent.getEventHeaders().get("variable_sip_from_user"),
+                    eslEvent.getEventHeaders().get("variable_sip_to_user"),
+                    map.get("call_id"));
+        }
+        catch(Exception ex){
+            logger.error(ex.getMessage(), ex);
+        }
+    }
+    private void sendMsgCommand(String uuid, String callCommand,
+                                String appName, String appArg, boolean isEventLog) {
+        SendMsg cmd = new SendMsg(uuid);
+        cmd.addCallCommand(callCommand);
+        cmd.addExecuteAppName(appName);
+        if (appArg != null) {
+
+            cmd.addExecuteAppArg(appArg);
+        }
+        if (isEventLog || appName.equals("bridge")) {
+            // not async
+            cmd.addEventLock();
+        }
+        CommandResponse commandResponse = inboundClient.sendMessage(cmd);
+        logger.info("sendMsgCommand: {} = {} => {}", callCommand + " " + appName + " " + appArg,
+                commandResponse.isOk(), commandResponse.getReplyText());
     }
 
     private Map<String, String> getCDRFromESLEvent(EslEvent eslEvent) {
         Map<String, String> eventHeaders = eslEvent.getEventHeaders();
         Map<String, String> map = new HashMap<>();
         if (eventHeaders != null) {
-
             map.put("type_call", eventHeaders.get("Caller-Context"));
-            map.put("ivr", eventHeaders.get("variable_ringme_call_ivr"));
-            map.put("call_id", eventHeaders.get("variable_sip_call_id"));
+            map.put("call_id", eventHeaders.get("variable_sip_call_id")); //ringme=sip
             map.put("state", eventHeaders.get("Channel-Call-State"));
 
             map.put("sip_invite_failure_status", eventHeaders.get("variable_sip_invite_failure_status"));
@@ -163,20 +319,19 @@ public class ESLInboundHandler {
 
             long duration = (long) Math.ceil(Long.parseLong(eventHeaders.get("variable_billmsec")) / 1000d);
             map.put("duration", String.valueOf(duration));
-            map.put("mduration", eventHeaders.get("variable_billmsec"));
+            map.put("mduration", eventHeaders.get("variable_mobilise"));
             map.put("total-duration", eventHeaders.get("variable_duration"));
             map.put("wait-duration", eventHeaders.get("variable_duration"));
             map.put("time_invite", convertTimestampToStringDate(Long
-                            .parseLong(eventHeaders.get("variable_start_epoch")) * 1000));
+                    .parseLong(eventHeaders.get("variable_start_epoch")) * 1000));
             map.put("time_answer", convertTimestampToStringDate(Long
-                            .parseLong(eventHeaders.get("variable_answer_epoch")) * 1000));
+                    .parseLong(eventHeaders.get("variable_answer_epoch")) * 1000));
             map.put("time_end", convertTimestampToStringDate(Long
-                            .parseLong(eventHeaders.get("variable_end_epoch")) * 1000));
+                    .parseLong(eventHeaders.get("variable_end_epoch")) * 1000));
 
-            if (map.get("type_call").equals("ctx_callout")) {
+            if (map.get("type_call").equals("company-a")) {
 
                 if (eventHeaders.get("variable_ringme_origin_caller") != null) {
-
                     map.put("caller", eventHeaders.get("variable_ringme_origin_caller"));
                 } else {
                     map.put("caller", eventHeaders.get("Caller-Caller-ID-Number"));
@@ -188,340 +343,41 @@ public class ESLInboundHandler {
                             .replace("record_", "")
                             .split("_");
                     if (arr.length > 0) {
-
                         map.put("callee", arr[0]);
                     }
                 }
-                map.put("mnpFrom", eventHeaders.get("variable_ringme_telecom"));
+                map.put("transfer_to", eventHeaders.get("variable_sip_req_user"));
+                map.put("transfer_from", eventHeaders.get("Caller-Caller-ID-Number"));
+
                 if (eventHeaders.get("variable_sip_req_user") != null) {
-                    String[] arr = eventHeaders.get("variable_sip_req_user").split("_");
-                    map.put("mnpTo", arr[arr.length - 1]);
+                    map.put("sip_req_user", eventHeaders.get("variable_sip_req_user"));
                 }
-                map.put("hotline", eventHeaders.get("Caller-Caller-ID-Number"));
-
-                map.put("bridge_hangup_cause", eventHeaders.get("variable_bridge_hangup_cause"));
-
-                if (map.get("hangup_cause").equals("MEDIA_TIMEOUT")) {
-                    logger.info("CALLOUT|" + map.get("caller") + "|" + map.get("callee") + "|" +
-                            map.get("call_id") + "|MEDIA_TIMEOUT|" + map.get("duration"));
-
-                    if(map.get("duration") != null && Long.parseLong(map.get("duration")) == 1) {
-                        map.put("duration", String.valueOf(0));
-                    }
-                } else {
-
-                    String timeAccept = null ;
-                    if (timeAccept != null) {
-                        long mdurationRedis = (Long.parseLong(eventHeaders.get("variable_end_epoch")) * 1000) - Long.parseLong(timeAccept);
-                        long durationRedis = (long) Math.ceil(mdurationRedis / 1000d);
-                        if (durationRedis > Long.parseLong(map.get("duration"))) {
-                            logger.info("CHANGE DURATION FROM REDIS:callId={} | duration old={} | timeAccept old={}",
-                                    map.get("call_id"), map.get("duration"), map.get("time_answer"));
-//                            map.put("time_answer", Utils.convertTimestampToStringDate(Long.parseLong(timeAccept)));
-                            map.put("mduration_redis", String.valueOf(mdurationRedis));
-                            map.put("duration", String.valueOf(durationRedis));
-
-                            if (durationRedis == 60) {
-                                logger.info("CALLOUT|" + map.get("caller") + "|" + map.get("callee") + "|" + map.get("call_id") + "|DURATION=60|");
-                            }
-                        } else {
-//                            logger.info("NOT CHANGE DURATION REDIS|{}|{}|{}", map.get("call_id"), mdurationRedis, Utils.convertTimestampToStringDate(Long.parseLong(timeAccept)));
-                        }
-                    }
+                if (eventHeaders.get("variable_sip_req_host") != null) {
+                    map.put("sip_req_host", eventHeaders.get("variable_sip_req_host"));
                 }
-            } else {
-//                map.put("call_id", eventHeaders.get("Unique-ID"));
-                map.put("caller", eventHeaders.get("Caller-Orig-Caller-ID-Number"));
-                map.put("callee", eventHeaders.get("variable_ringme_dest_callee"));
-                map.put("mnpFrom", eventHeaders.get("variable_ringme_telecom"));
-                map.put("hotline", eventHeaders.get("Caller-Callee-ID-Number"));
-
-                if (map.get("hotline") == null) {
-                    map.put("hotline", eventHeaders.get("Caller-Destination-Number"));
+                if (eventHeaders.get("variable_sip_req_port") != null) {
+                    map.put("sip_req_port", eventHeaders.get("variable_sip_req_port"));
                 }
-                if (map.get("hotline") != null) {
-
-//                    map.put("mnpTo", getMnpToCallin(map.get("hotline")));
-                } else {
-//                    printLog(eslEvent);
-                    map.put("mnpTo", "variable_ringme_telecom");
+                if (eventHeaders.get("variable_sip_req_uri") != null) {
+                    map.put("sip_req_uri", eventHeaders.get("variable_sip_req_uri"));
                 }
-                map.put("bridge_hangup_cause", eventHeaders.get("variable_hangup_cause"));
             }
-
-            Map<String, String> customs = convertCustomStatus(map);
-            map.putAll(customs);
-            if (customs.get("status") != null && customs.get("status").equals("answered")) {
-                if (map.get("ivr") != null) {
-                    if (eventHeaders.get("variable_execute_on_answer") != null &&
-                            eventHeaders.get("variable_execute_on_answer").contains("record_session")) {
-
-                        int startIndex = eventHeaders.get("variable_execute_on_answer").indexOf("/call-record");
-                        int endIndex = eventHeaders.get("variable_execute_on_answer").indexOf(".wav");
-                        String path = eventHeaders.get("variable_execute_on_answer").substring(startIndex + 12, endIndex + 4);
-//                        map.put("domain_record", configuration.getUatDomain());
-//                        map.put("link_record", configuration.getApi2Prefix() + path);
-                    }
-                } else if (eventHeaders.get("variable_last_arg") != null &&
-                        (eventHeaders.get("variable_last_arg").contains("record_session") ||
-                                eventHeaders.get("variable_last_arg").endsWith(".wav"))) {
-                    // record link
-//                    map.putAll(getLinkRecord(eventHeaders));
-                }
-                long waitDuration = Long.parseLong(map.get("total-duration")) - Long.parseLong(map.get("duration"));
-                map.put("wait-duration", String.valueOf(waitDuration));
-            }
-            logger.info(map);
         }
         return map;
     }
-    private Map<String, String> convertCustomStatus(Map<String, String> map) {
-        Map<String, String> customs = new HashMap<>();
-        String status = "", callStatus = "", callStatusCode = "",
-                customCallStatus = "", customCallStatusCode = "", closedBy = "";
-        boolean isEndCall = map.get("hangup_cause").equals("NORMAL_CLEARING") &&
-                (map.get("type_call").equals("ctx_callin") ||
-                        (map.get("bridge_hangup_cause") != null && map.get("bridge_hangup_cause").equals("NORMAL_CLEARING")));
-
-        if (map.get("type_call").equals("ctx_callout")) {
-
-            if ((map.get("hangup_cause").equals("NORMAL_UNSPECIFIED") || !isEndCall) &&
-                    map.get("duration") != null && Long.parseLong(map.get("duration")) > 0) {
-                logger.info("CALLOUT|" + map.get("caller") + "|" + map.get("callee") + "|" + map.get("call_id") +
-                        "|CHANGE_OTHER_HANGUP_CAUSE|" + map.get("hangup_cause"));
-                isEndCall = true;
-            }
-
-            if (isEndCall) {
-                status = "answered";
-                callStatus = "Callee Hangup";
-                callStatusCode = "203";
-                closedBy = "callee";
-
-                customCallStatus = "answered";
-                customCallStatusCode = "489";
-            } else if (map.get("sip_invite_failure_status") != null) {
-                status = "no-answered";
-                if (map.get("hangup_cause").equals("ORIGINATOR_CANCEL")) {
-
-                    callStatus = "Caller Cancel";
-                    callStatusCode = "487";
-                    closedBy = "caller";
-
-                    customCallStatus = "noanswers";
-                    customCallStatusCode = "487";
-                } else if (map.get("sip_invite_failure_status").equals("480")) {
-                    if (map.get("bridge_hangup_cause") != null && map.get("bridge_hangup_cause").equals("NO_ANSWER")) {
-
-                        // callee cancel + timeout
-                        callStatus = "Callee Cancel"; //chưa định nghĩa Callee Cancel cho vnpost
-                        callStatusCode = "488";
-                        closedBy = "callee";
-
-                        customCallStatus = "noanswers";
-                        customCallStatusCode = "487";
-                    } else if (map.get("originate_failed_cause") != null &&
-                            map.get("originate_failed_cause").equals("NO_ANSWER") && map.get("bridge_hangup_cause") == null) {
-
-                        // busy
-                        status = "busy";
-                        callStatus = "Busy";
-                        callStatusCode = "480";
-                        closedBy = "callee";
-
-                        customCallStatus = "busy";
-                        customCallStatusCode = "486";
-                    } else {
-
-                        callStatus = "Unavailable";
-                        callStatusCode = "491";
-                        closedBy = "callee";
-
-                        customCallStatus = "telerror";
-                        customCallStatusCode = "491";
-                    }
-                } else if (map.get("sip_invite_failure_status").equals("403") ||
-                        map.get("sip_invite_failure_status").equals("503")) {
-
-                    callStatus = "Unavailable";
-                    callStatusCode = "491";
-                    closedBy = "callee";
-
-                    customCallStatus = "telerror";
-                    customCallStatusCode = "491";
-                } else {
-                    // callee hangup
-                    callStatus = "Busy";
-                    callStatusCode = "480";
-                    closedBy = "callee";
-
-                    customCallStatus = "busy";
-                    customCallStatusCode = "486";
-                }
-            } else {
-                if (map.get("bridge_hangup_cause") != null &&
-                        map.get("bridge_hangup_cause").equals("ORIGINATOR_CANCEL")) {
-                    // timeout
-                    status = "no-answered";
-                    callStatus = "Timeout";
-                    callStatusCode = "488";
-                    closedBy = "caller";
-
-                    customCallStatus = "noanswers";
-                    customCallStatusCode = "487";
-                } else if (map.get("hangup_cause").equals("MEDIA_TIMEOUT")) {
-
-                    if (map.get("duration") != null && Long.parseLong(map.get("duration")) >= 2) {
-
-                        status = "answered";
-                        callStatus = "Callee Hangup";
-                        callStatusCode = "203";
-
-                        customCallStatus = "answered";
-                        customCallStatusCode = "489";
-
-                        logger.info("CALLOUT|" + map.get("caller") + "|" + map.get("callee") + "|" + map.get("call_id") +
-                                "|MEDIA_TIMEOUT|answered|" + map.get("duration"));
-                    } else if (map.get("bridge_hangup_cause") != null &&
-                            map.get("bridge_hangup_cause").equals("NORMAL_CLEARING")) {
-                        status = "no-answered";
-                        callStatus = map.get("hangup_cause");
-                        callStatusCode = "499";
-
-                        customCallStatus = "error";
-                        customCallStatusCode = "494";
-                    } else {
-                        status = "no-answered";
-                        callStatus = "Unavailable";
-                        callStatusCode = "491";
-
-
-                        customCallStatus = "telerror";
-                        customCallStatusCode = "491";
-                    }
-                    closedBy = "callee";
-                } else {
-
-                    status = "no-answered";
-                    callStatus = "Unavailable";
-                    callStatusCode = "491";
-                    closedBy = "callee";
-
-                    customCallStatus = "telerror";
-                    customCallStatusCode = "491";
-                }
-            }
-        }
-//        } else if (map.get("type_call").equals("ctx_callin")) {
-//            Integer redisCallinCode = redisService.getRecentCallinCode(map.get("call_id"));
-//
-//            if (isEndCall) {
-//                status = "answered";
-//                if (redisCallinCode != null) {
-//
-//                    callStatus = "Callee Hangup";
-//                    callStatusCode = "203";
-//                    closedBy = "callee";
-//
-//                } else {
-//
-//                    callStatus = "Caller Hangup";
-//                    callStatusCode = "204";
-//                    closedBy = "caller";
-//                }
-//
-//                customCallStatus = "answered";
-//                customCallStatusCode = "602";
-//            } else if (map.get("sip_invite_failure_status") != null) {
-//                status = "no-answered";
-//                if (map.get("hangup_cause").equals("ORIGINATOR_CANCEL")) {
-//
-//                    callStatus = "Caller Cancel";
-//                    callStatusCode = "487";
-//                    closedBy = "caller";
-//
-//                    customCallStatus = "noanswers";
-//                    customCallStatusCode = "600";
-//                } else if (redisCallinCode != null) {
-//                    if (redisCallinCode == 486) {
-//                        callStatus = "Busy";
-//                        callStatusCode = "480";
-//                        closedBy = "callee";
-//
-//                        customCallStatus = "busy";
-//                        customCallStatusCode = "605";
-//                    } else if (redisCallinCode == 488) {
-//                        callStatus = "Callee Cancel";
-//                        callStatusCode = "488";
-//                        closedBy = "callee";
-//
-//                        customCallStatus = "noanswers";
-//                        customCallStatusCode = "600";
-//                    } else if (redisCallinCode == 489) {
-//                        callStatus = "Timeout";
-//                        callStatusCode = "489";
-//                        closedBy = "callee";
-//
-//                        customCallStatus = "noanswers";
-//                        customCallStatusCode = "600";
-//                    }
-//
-//                } else if (map.get("hangup_cause").equals("USER_BUSY") &&
-//                        map.get("sip_invite_failure_status").equals("486")) {
-//                    callStatus = "Callee Cancel";
-//                    callStatusCode = "488";
-//                    closedBy = "callee";
-//
-//                    customCallStatus = "noanswers";
-//                    customCallStatusCode = "600";
-//                } else {
-//                    callStatus = "Timeout";
-//                    callStatusCode = "489";
-//                    closedBy = "callee";
-//
-//                    customCallStatus = "noanswers";
-//                    customCallStatusCode = "600";
-//                }
-//            }
-//            else {
-//                status = "no-answered";
-//                callStatus = map.get("hangup_cause");
-//                callStatusCode = "488";
-//                closedBy = "callee";
-//
-//                customCallStatus = "noanswers";
-//                customCallStatusCode = "600";
-//            }
-//        }
-        customs.put("status", status);
-        customs.put("callStatus", callStatus);
-        customs.put("callStatusCode", callStatusCode);
-        customs.put("closedBy", closedBy);
-
-        customs.put("customCallStatus", customCallStatus);
-        customs.put("customCallStatusCode", customCallStatusCode);
-        return customs;
-    }
-
-    private void printLog(EslEvent event) {
-        logger.info("Received connect response [" + event.getEventName() + "]");
+    void printLog(EslEvent event) {
+        logger.info("Received connect response [{}]", event.getEventName());
         Map<String, String> eventHeaders = event.getEventHeaders();
 
         logger.info("=======================  eventHeaders  =============================");
         if (eventHeaders != null) {
             for (String key : eventHeaders.keySet()) {
-                logger.info(key + ": " + eventHeaders.get(key));
+                logger.info("{}: {}", key, eventHeaders.get(key));
             }
         }
     }
-    public static final ThreadLocal<SimpleDateFormat> formatter2 = new ThreadLocal<SimpleDateFormat>() {
-        @Override
-        protected SimpleDateFormat initialValue() {
-            return new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-        }
-    };
-    public static String convertTimestampToStringDate(long stamp) {
-//        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy/MM/dd HH:mm:ss");
-        return formatter2.get().format(new Date(stamp));
+    private String convertTimestampToStringDate(long timestamp) {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+        return sdf.format(new Date(timestamp));
     }
 }

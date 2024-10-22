@@ -58,18 +58,14 @@ public class ESLInboundManager {
         }
     }
 
-    public void transfer(String callee, String calleeTransfer) {
-        try {
-            ESLInboundHandler eslInboundHandler = runningFreeswitchs.get(0);
-            if (eslInboundHandler != null && eslInboundHandler.isConnected()) {
-                eslInboundHandler.transfer(callee, calleeTransfer);
-                logger.info("Transfer thành công.");
-            } else {
-                logger.warn("Không thể gọi Transfer() vì ESLInboundHandler không kết nối hoặc không tồn tại.");
-            }
-        } catch (Exception e) {
-            logger.error("[ESLInboundManager] Lỗi khi gọi transfer()", e);
-        }
+    public void transferCall(String callId, String caller, String oldCallee, String newCallee, int type) {
+        runningFreeswitchs.get(runningFreeswitchs.keySet().stream().findFirst().get())
+                .transferCall(callId, caller, oldCallee, newCallee, type);
+    }
+
+    public void musicOnHold(String callId, String caller) {
+        runningFreeswitchs.get(runningFreeswitchs.keySet().stream().findFirst().get())
+                .musicOnHold(callId, caller);
     }
 
     @Scheduled(fixedRate = 60000)

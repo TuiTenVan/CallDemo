@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User 1002: Receive a Call</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sip.js/0.20.0/sip.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f2f2f2;
+            text-align: center;
+        }
+        #callUI {
+            display: none;
+            width: 350px;
+            background-color: #1a2b48;
+            padding: 20px;
+            border-radius: 20px;
+            color: white;
+            text-align: center;
+            position: relative;
+            margin: 50px auto;
+        }
+        #callUI .call-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+        #callUI .call-header img {
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+        }
+        #callUI .call-header .call-info {
+            flex: 1;
+            text-align: left;
+            padding-left: 10px;
+        }
+        #callUI .call-header .call-status {
+            background-color: #ffd700;
+            padding: 5px 10px;
+            border-radius: 10px;
+            color: black;
+        }
+        #callUI .call-controls {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .call-controls button {
+            background-color: #1a2b48;
+            border: none;
+            color: white;
+            padding: 15px;
+            font-size: 18px;
+            cursor: pointer;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+        }
+        .call-controls button:hover {
+            background-color: #3b4a6b;
+        }
+        .call-controls #endCall {
+            background-color: #f44336;
+        }
+        .call-controls #endCall:hover {
+            background-color: #ff5c5c;
+        }
+        /* Giao diện quay số */
+        .dial-pad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-gap: 10px;
+            margin-top: 20px;
+        }
+        .dial-pad button {
+            background-color: #1a2b48;
+            border: none;
+            color: white;
+            font-size: 24px;
+            padding: 20px;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        .dial-pad button:hover {
+            background-color: #3b4a6b;
+        }
+        #videoContainer {
+            margin-top: 15px;
+        }
+        #videoContainer video {
+            width: 100%;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>User 1002: Ready to Receive Calls</h1>
+
+<!-- Trường hiển thị giao diện cuộc gọi -->
+<div id="callUI">
+    <div id="videoContainer">
+        <video id="localVideo" autoplay muted></video>
+        <video id="remoteVideo" autoplay></video>
+    </div>
+
+    <div class="call-controls">
+        <button id="muteAudio">🔇</button> <!-- Tắt tiếng -->
+        <button id="toggleVideo">🎥</button> <!-- Tắt/bật video -->
+        <button id="endCall">🔴</button> <!-- Kết thúc cuộc gọi -->
+    </div>
+
+    <!-- Bàn phím quay số DTMF -->
+    <div class="dial-pad">
+        <button id="dtmf1">1</button>
+        <button id="dtmf2">2</button>
+        <button id="dtmf3">3</button>
+        <button id="dtmf4">4</button>
+        <button id="dtmf5">5</button>
+        <button id="dtmf6">6</button>
+        <button id="dtmf7">7</button>
+        <button id="dtmf8">8</button>
+        <button id="dtmf9">9</button>
+        <button id="dtmfStar">*</button>
+        <button id="dtmf0">0</button>
+        <button id="dtmfHash">#</button>
+    </div>
+</div>
+
+<script>
+    let userAgent;
+    let localStream;
+    let activeSession;
+
+    // Lấy video từ camera và micro
+    function getLocalStream() {
+        return navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;  // Hiển thị camera local
+                return stream;
+            })
+            .catch(error => {
+                console.error("Error accessing media devices.", error);
+            });
+    }
+
+    window.onload = function () {
+        userAgent = new SIP.UserAgent({
+            uri: new SIP.URI("sip", "1002", "192.168.1.183", 5070),
+            transportOptions: {
+                wsServers: ['ws://192.168.1.183:5066']
+            },
+            authorizationUsername: '1002',
+            authorizationPassword: '1234'
+        });
+
+        userAgent.start()
+            .then(() => {
+                console.log("UserAgent for 1002 started successfully");
+                const registerer = new SIP.Registerer(userAgent);
+                console.log(registerer)
+                registerer.register();
+                setupCallReceiving();
+            })
+            .catch((error) => {
+                console.error("Failed to start UserAgent for 1002:", error);
+            });
+
+        // Tắt tiếng
+        document.getElementById("muteAudio").onclick = function () {
+            if (localStream && localStream.getAudioTracks().length > 0) {
+                const audioTrack = localStream.getAudioTracks()[0];
+                audioTrack.enabled = !audioTrack.enabled;
+                this.textContent = audioTrack.enabled ? '🔇' : '🔊';
+            } else {
+                console.error("No audio tracks available in localStream.");
+            }
+        };
+
+        // Tắt hoặc bật video
+        document.getElementById("toggleVideo").onclick = function () {
+            if (localStream && localStream.getVideoTracks().length > 0) {
+                const videoTrack = localStream.getVideoTracks()[0];
+                videoTrack.enabled = !videoTrack.enabled;
+                this.textContent = videoTrack.enabled ? '🎥' : '🚫';
+            } else {
+                console.error("No video tracks available in localStream.");
+            }
+        };
+
+        // Kết thúc cuộc gọi
+        document.getElementById("endCall").onclick = function () {
+            endCall();
+        };
+
+        // Gửi DTMF
+        document.querySelectorAll(".dial-pad button").forEach(button => {
+            button.onclick = function () {
+                const dtmfValue = this.textContent;
+                sendDTMF(dtmfValue);
+            };
+        });
+    };
+
+    function setupCallReceiving() {
+        userAgent.delegate = {
+            onInvite: async (invitation) => {
+                if (confirm("You have an incoming call. Do you want to accept?")) {
+                    try {
+                        await getLocalStream();  // Gọi getLocalStream để lấy và hiển thị video/mic của chính mình
+                        const session = await invitation.accept({
+                            sessionDescriptionHandlerOptions: {
+                                constraints: {
+                                    audio: true,
+                                    video: true
+                                },
+                                localStream: localStream  // Truyền localStream vào để gửi video/audio của chính mình
+                            }
+                        });
+
+                        activeSession = session;
+                        document.getElementById('callUI').style.display = 'block'; // Hiển thị giao diện cuộc gọi
+                        console.log(activeSession.sessionDescriptionHandlerOptions())
+                        // Hiển thị remote và local video
+                        session.stateChange.addListener((state) => {
+                            if (state === SIP.SessionState.Established) {
+                                const pc = session.sessionDescriptionHandler.peerConnection;
+
+                                // Khi có track mới từ remote
+                                pc.ontrack = (event) => {
+                                    const remoteStream = new MediaStream();
+                                    event.streams[0].getTracks().forEach(track => {
+                                        remoteStream.addTrack(track);
+                                    });
+                                    document.getElementById('remoteVideo').srcObject = remoteStream;
+                                };
+                            }
+                        });
+
+                    } catch (error) {
+                        console.error("Error accepting the call:", error);
+                    }
+                } else {
+                    invitation.reject();
+                    console.log("Call rejected");
+                }
+            }
+        };
+    }
+
+    // Hàm gửi DTMF
+    function sendDTMF(dtmfValue) {
+        if (activeSession && activeSession.sessionDescriptionHandler) {
+            const dtmfSender = activeSession.sessionDescriptionHandler.peerConnection.getSenders()
+                .find(sender => sender.track && sender.track.kind === 'audio');
+
+            if (dtmfSender && dtmfSender.dtmf) {
+                dtmfSender.dtmf.insertDTMF(dtmfValue);
+                console.log("DTMF đã được gửi thành công: " + dtmfValue);
+            } else {
+                console.error("Không thể gửi DTMF.");
+            }
+        } else {
+            console.error("Phiên không hợp lệ hoặc không hỗ trợ gửi DTMF.");
+        }
+    }
+
+    // Kết thúc cuộc gọi
+    function endCall() {
+        if (activeSession) {
+            activeSession.bye();
+            document.getElementById('callUI').style.display = 'none';  // Ẩn giao diện cuộc gọi
+            console.log("Cuộc gọi đã kết thúc.");
+        }
+    }
+</script>
+</body>
+</html>

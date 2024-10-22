@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User 1001: Make a Call</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sip.js/0.20.0/sip.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f2f2f2;
+            text-align: center;
+        }
+        #callUI {
+            display: none;
+            width: 350px;
+            background-color: #1a2b48;
+            padding: 20px;
+            border-radius: 20px;
+            color: white;
+            text-align: center;
+            position: relative;
+            margin: 50px auto;
+        }
+
+        #callUI .call-header img {
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+        }
+        #callUI .call-header .call-info {
+            flex: 1;
+            text-align: left;
+            padding-left: 10px;
+        }
+        #callUI .call-header .call-status {
+            background-color: #ffd700;
+            padding: 5px 10px;
+            border-radius: 10px;
+            color: black;
+        }
+        #callUI .call-controls {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .call-controls button {
+            background-color: #1a2b48;
+            border: none;
+            color: white;
+            padding: 15px;
+            font-size: 18px;
+            cursor: pointer;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+        }
+        .call-controls button:hover {
+            background-color: #3b4a6b;
+        }
+        .call-controls #endCall {
+            background-color: #f44336;
+        }
+        .call-controls #endCall:hover {
+            background-color: #ff5c5c;
+        }
+        /* Giao diện quay số */
+        .dial-pad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-gap: 10px;
+            margin-top: 20px;
+        }
+        .dial-pad button {
+            background-color: #1a2b48;
+            border: none;
+            color: white;
+            font-size: 24px;
+            padding: 20px;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        .dial-pad button:hover {
+            background-color: #3b4a6b;
+        }
+        #videoContainer {
+            margin-top: 15px;
+        }
+        #videoContainer video {
+            width: 100%;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>User 1001: Make a Call</h1>
+
+<!-- Trường nhập số SIP đích để gọi -->
+<input type="text" id="sipAddress" placeholder="Enter SIP address (e.g., 1002@192.168.1.183)">
+<button id="callButton">Call</button>
+
+<div id="callUI">
+    <div id="videoContainer">
+        <video id="localVideo" autoplay muted></video>
+        <video id="remoteVideo" autoplay></video>
+    </div>
+
+    <div class="call-controls">
+        <button id="muteAudio">🔇</button> <!-- Tắt tiếng -->
+        <button id="toggleVideo">🎥</button> <!-- Tắt/bật video -->
+        <button id="endCall">🔴</button> <!-- Kết thúc cuộc gọi -->
+    </div>
+
+    <!-- Bàn phím quay số DTMF -->
+    <div class="dial-pad">
+        <button id="dtmf1">1</button>
+        <button id="dtmf2">2</button>
+        <button id="dtmf3">3</button>
+        <button id="dtmf4">4</button>
+        <button id="dtmf5">5</button>
+        <button id="dtmf6">6</button>
+        <button id="dtmf7">7</button>
+        <button id="dtmf8">8</button>
+        <button id="dtmf9">9</button>
+        <button id="dtmfStar">*</button>
+        <button id="dtmf0">0</button>
+        <button id="dtmfHash">#</button>
+    </div>
+</div>
+
+<script>
+    let userAgent;
+    let localStream;
+    let activeSession;
+    let callDuration = 0;
+    let callInterval;
+
+    // Lấy video từ camera và micro
+    function getLocalStream() {
+        return navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+            .then(stream => {
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;  // Hiển thị camera local
+                return stream;
+            })
+            .catch(error => {
+                console.error("Error accessing media devices.", error);
+            });
+    }
+
+    window.onload = function () {
+        userAgent = new SIP.UserAgent({
+            uri: new SIP.URI("sip", "1001", "192.168.1.183", 5070),
+            transportOptions: {
+                wsServers: ['ws://192.168.1.183:5066']
+            },
+            authorizationUsername: '1001',
+            authorizationPassword: '1234'
+        });
+
+        userAgent.start()
+            .then(() => {
+                console.log("UserAgent for 1001 started successfully");
+            })
+            .catch((error) => {
+                console.error("Failed to start UserAgent for 1001:", error);
+            });
+
+        // Nhấn nút để thực hiện cuộc gọi với số SIP người dùng đã nhập
+        document.getElementById("callButton").onclick = function () {
+            const sipAddress = document.getElementById("sipAddress").value.trim();  // Lấy giá trị từ trường nhập
+            if (sipAddress) {
+                console.log("Attempting to call: ", sipAddress);  // Log để kiểm tra số đang gọi
+                getLocalStream().then(() => makeCall(sipAddress));  // Thực hiện cuộc gọi với SIP URI người dùng đã nhập
+            } else {
+                alert("Please enter a valid SIP address.");
+            }
+        };
+
+        // Nhấn nút "End Call" để kết thúc cuộc gọi
+        document.getElementById("endCall").onclick = function () {
+            endCall();
+        };
+
+        // Tắt hoặc bật âm thanh
+        document.getElementById("muteAudio").onclick = function () {
+            if (localStream && localStream.getAudioTracks().length > 0) {
+                const audioTrack = localStream.getAudioTracks()[0];
+                audioTrack.enabled = !audioTrack.enabled;
+                this.textContent = audioTrack.enabled ? '🔇' : '🔊';
+            } else {
+                console.error("No audio tracks available in localStream.");
+            }
+        };
+
+        // Tắt hoặc bật video
+        document.getElementById("toggleVideo").onclick = function () {
+            if (localStream && localStream.getVideoTracks().length > 0) {
+                const videoTrack = localStream.getVideoTracks()[0];
+                videoTrack.enabled = !videoTrack.enabled;
+                this.textContent = videoTrack.enabled ? '🎥' : '🚫';
+            } else {
+                console.error("No video tracks available in localStream.");
+            }
+        };
+
+        // Sự kiện gửi DTMF cho các nút số
+        document.querySelectorAll(".dial-pad button").forEach(button => {
+            button.onclick = function () {
+                const dtmfValue = this.textContent;
+                sendDTMF(dtmfValue);
+            };
+        });
+    };
+
+    // Hàm thực hiện cuộc gọi
+    function makeCall(targetSIP) {
+        const targetURI = new SIP.URI("sip", targetSIP, "192.168.1.183", 5070);
+
+        const inviter = new SIP.Inviter(userAgent, targetURI, {
+            sessionDescriptionHandlerOptions: {
+                constraints: {
+                    audio: true,
+                    video: true
+                },
+                localStream: localStream
+            }
+        });
+
+        console.log(inviter)
+
+        inviter.invite()
+            .then((session) => {
+                activeSession = session;
+                console.log(session)// Lưu phiên hiện tại để có thể kết thúc sau
+                console.log(activeSession)
+                // Hiển thị giao diện cuộc gọi
+                document.getElementById('callUI').style.display = 'block';  // Hiển thị giao diện khi cuộc gọi bắt đầu
+                console.log("Call UI displayed");
+
+                // Bắt đầu đếm thời gian cuộc gọi
+                callDuration = 0;
+                callInterval = setInterval(updateCallDuration, 1000);
+
+                console.log("Call initiated successfully");
+            })
+            .catch((error) => {
+                console.error("Failed to start the call:", error);
+            });
+    }
+
+    // Hàm gửi DTMF
+    function sendDTMF(dtmfValue) {
+        // Kiểm tra xem activeSession có tồn tại và sessionDescriptionHandler có hỗ trợ sendDTMF không
+        if (activeSession || activeSession.sessionDescriptionHandler || activeSession.sessionDescriptionHandler.sendDTMF) {
+            try {
+                // Gửi DTMF qua sessionDescriptionHandler
+                activeSession.sessionDescriptionHandler.sendDTMF(dtmfValue)
+                    .then(() => {
+                        console.log("DTMF đã được gửi thành công: " + dtmfValue);
+                    })
+                    .catch((error) => {
+                        console.error("Lỗi khi gửi DTMF: ", error);
+                    });
+            } catch (error) {
+                console.error("Lỗi khi gửi DTMF: ", error);
+            }
+        } else {
+            console.error("Phiên không hợp lệ hoặc không hỗ trợ gửi DTMF.");
+        }
+    }
+
+
+    // Cập nhật thời gian cuộc gọi
+    function updateCallDuration() {
+        callDuration++;
+        const minutes = String(Math.floor(callDuration / 60)).padStart(2, '0');
+        const seconds = String(callDuration % 60).padStart(2, '0');
+        document.querySelector('.call-status').textContent = `${minutes}:${seconds}`;
+    }
+
+    // Hàm kết thúc cuộc gọi
+    function endCall() {
+        if (activeSession) {
+            if (typeof activeSession.bye === 'function') {
+                activeSession.bye();  // Kết thúc cuộc gọi bằng tín hiệu BYE
+                document.getElementById('callUI').style.display = 'none';  // Ẩn giao diện cuộc gọi
+                clearInterval(callInterval);  // Dừng đếm thời gian cuộc gọi
+                console.log("Cuộc gọi đã kết thúc.");
+            } else {
+                console.error("Phiên không hỗ trợ 'bye'. Kết thúc phiên bằng 'terminate'.");
+                activeSession.terminate();  // Kết thúc phiên không có 'bye'
+            }
+        } else {
+            console.error("Không có phiên hoạt động để kết thúc.");
+        }
+    }
+
+</script>
+</body>
+</html>
